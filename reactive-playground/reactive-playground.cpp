@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <functional>
+#include <concepts>
 #include <rpp/rpp.hpp>
 #include "coroutine_generator.h"
 
@@ -20,18 +21,34 @@ coroutine_generator<int> fibonacci()
     }
 }
 
+namespace rpp::source
+{
+    template <typename G, typename T>
+    concept generator = requires (G g)
+    {
+        { std::invocable<G> };
+        { g() } -> std::convertible_to<coroutine_generator<T>>;
+    };
+
+    template <typename T>
+    auto from_coroutine(generator<T> auto generator)
+    {
+        return create<T>([generator](auto subscriber)
+            {
+                auto coroutine = generator();
+
+                while (!subscriber.is_disposed() && coroutine.move_next())
+                    subscriber.on_next(coroutine.current_value());
+            });
+    }
+}
 
 int main()
 {
     namespace src = rpp::source;
     namespace ops = rpp::operators;
 
-    auto observable$ = src::create<int>([](auto subscriber) {
-            auto coro = fibonacci();
-
-            while (!subscriber.is_disposed() && coro.move_next())
-                subscriber.on_next(coro.current_value());
-        })
+    auto observable$ = src::from_coroutine<int>(fibonacci)
         | ops::filter([](auto value) { return value % 2 == 0; })
         | ops::take_while([](auto value) { return value <= 1500; })
         | ops::map([](auto value) {
